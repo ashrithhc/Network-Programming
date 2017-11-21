@@ -1,0 +1,42 @@
+Step 1:
+	Run "make"
+	The Makefile will pull in files from the directory dtructure as it is and provide "client" and "server" executables.
+
+What does the output mean?
+1) The unicast addresses bound to by client and server are displayed.
+
+2) The Client address is displayed the server after it receives first datagram.
+
+3) The server address is displayed by the client every time the port is changed.
+
+4) Every sequence packet is printed out by the client at an interval. The server on the other hand sends packets upto 512 bytes.
+
+Test case 1:
+
+To download a large file (file2.txt in the bin/ folder)
+Run the server with all the parameters (Please try through command if the arguments fail when read from file)
+
+Running client : ./client 130.245.1.44 4321 30 0 2 100000
+Running server : ./server 4321 2 bin/
+
+In client, type :
+	list
+	download file2.txt
+
+Check all logs that are displayed
+
+Test case 2:
+
+Downloading a normal file, within 512 bytes
+
+In client, type :
+	download file1.txt
+
+
+Evaluation help :
+
+1) To test for resending of packets, once the new port is assigned, you can validate the implementation of Readable_timeo() on the client side, since the server is not ready when the client sends ack the first time. But server receives the second ack and replies with the final list/file.
+
+Request :
+
+1) The console on the server goes back after Completion of "list" or "download" request. This looks like the server has ended but it has not. Please do not cut marks before validating this part, sorry for the inconvenience. 
