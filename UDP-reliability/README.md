@@ -1,56 +1,105 @@
-# CSE533 Fall 2017 HW#1
+# CSE533 Fall 2017 HW#2
 
 ### Goal
-TCP socket client/server programming using I/O multiplexing, child processes and threads. 
+UDP Client/Server
+* Setting up the exchange between the client and server in a secure way despite the lack of a formal connection (as in TCP) between the two, so that ‘outsider’ UDP datagrams (broadcast, multicast, unicast - fortuitously or maliciously) cannot intrude on the communication.
+* Introducing application-layer protocol data-transmission reliability, flow control and congestion control in the client and server using TCP-like ARQ sliding window mechanisms.
+
+The congestion control section may have you modify what you made in the first part of the assignment and it is best to keep it in the back of your mind while proceeding. Try to write the client and server code as an independent units from the UDP reliability.
 
 #### Required Reading
-* Chapters 1-6
-* Pipes
-* Threads (Chap 26.1-26.5)
+* Chapter 8, 14, 22
+* Chapter 17: ioctl()
+* Section 20.5, Chapter 20: ‘Race’ Conditions
 
 #### Client
 
-    ./client ipaddressORhostname echoport timeport
-    
-* Use gethostbyaddress or gethostbyname and print the inverse to stdout
-* Infinitely accept on stdin commands “echo” and “time”, until “quit” is entered. All other inputs result in reprompt.
-  * When “echo” or “time” is entered, the client forks a child process to exec the proper service for the user in a separate xterm window.
-    * EG. execlp(“exterm”, “xterm”, “-e” “./echocli”, “127.0.0.1”, “300”, (char*) 0)
-    * EG. execlp(“exterm”, “xterm”, “-e” “./timecli”, “127.0.0.1”, “400”, (char*) 0)
-  * The child process will use a half-duplex pipe to communicate with the parent.  Note: xterm will close instantaneously upon child termination (normal or abnormal). Use this pipe to communicate status information, at a minimum for:
-    * Connection established/disconnected with server
-    * SIGCHILD 
-    * Abnormal termination conditions 
-  * The parent process will infinitely read and print any status messages from the child process to stdout until the pipe is closed or SIGCHILD is received. 
-* ./echocli ipaddress echoport
-  * Similar to Fig 6.9 or 6.13 
-  * Creates a TCP connection to server based on ipaddress and port
-  * User types on stdin. Upon enter, it is sent to server, which echoes the input back. 
-  * Must use I/O multiplexing (select or poll) between stdin and server socket. Use two different colors (ANSI escape sequences) to display user text vs text received from the server.
-  * To terminate the connection use ^D (CTRL-D, EOF char)
-* ./timecli ipaddress timeport
-  * Creates a TCP connection to server based on ipaddress and port
-  * Infinitely reads from server socket and displays on stdout of xterm.
-  * To terminate the connection use ^C (CTRL-C) - Note: equivalent to “crash” of the client program from the server’s perspective. Server must handle this correctly and close cleanly.
-* Client code MUST be robust to
-  * Server crashing (Chap 5.12 & 5.13)
-  * EINTR errors during slow system calls (eg. parent reading from pipe or printing to stdout) due to SIGCHLD.
-  * Child processes (Xterm) crashing
-  * What else??
+<code>bin/fclient</code> - A file transfer client that can select a file from the server’s present working directory and receive the file over a UDP connection.
+
+Arguments
+Since the arguments for this program are numerous you should read them from a file named <code>client.in</code>. The values are each on their own line and will always be in this order:
+* Server IP address (not hostname)
+* Server Port
+* A seed for srand() (more at the end of behavior section) 
+* Probability of datagram loss [0.0, 1.0] 0 means no loss, 1 means total loss
+* Maximum receiving sliding-window in datagrams (for reliability)
+* μ - Mean ms read delay (for reliability)
+
+Client Commands
+From a prompt accept the following commands:
+* <code>list</code> - lists the files available in the server’s public directory.
+* <code>download FILE [> FILENAME]</code> - requests that the server transmit one of the available files. The file being downloaded should be displayed on stdout unless the redirection symbol and file name are specified.
+* <code>quit</code> - Quits the client gracefully
+* Call srand(3) with the seed value from client.in
+* The client should create a UDP socket and bind on one IP that is a unicast address and that is linked to the network (e.g, not localhost) and port 0. This will give you an ephemeral port assigned randomly by the kernel. 
+* Use getsockname(2) to print in a readable format the ip and port the socket is now bound to. 
+* Next, connect the client to the server’s IP and port.
+* Use getpeername(2) to print in a readable format the server port and ip to confirm the proper connection.
+* Prompt to the user for a valid command. If an invalid command, do nothing and reprompt.
+* When the user types list or download the client sends a request datagram instructing the server to respond accordingly.  (Note: you’ll need a timeout in case the datagram is lost, start with 5 seconds)
+    * In the case of a timeout you should retransmit the request and hope for the best. 
+    * For debugging purposes, your client should give up, print out that it couldn’t get a response and exit after the 5th attempt.
+* The server will reply with a connection datagram (more on this in the server section) containing the new port number that the file will be sent over. This also serves as acknowledgement for the command sent. Using this connection datagram the client should reconnect its socket to this new connection server port. Upon success, send an ‘acknowledgements’ datagram to the server. 
+    * In the event of the server timing out with when setting up a  connection,  it should retransmit two copies of its ‘ephemeral port number’ message, one on its ‘listening’ socket and the other on its ‘connection’ socket (why?).
+    * All communication between the server and client is now performed on this connection.
+* The client now receives datagrams from the server from the new socket. 
+    * For list, print out the file list in a readable format (if you format your datagram contents nicely, you can just dump the contents as they come in).
+    * For download, as the datagrams arrive print out the  contents as they come in, in order, with nothing missing and with no duplication of content, directly on to stdout.
+* Added 10/24, NOTE: The client should use a separate thread to periodically read from the receive buffer and print the data to stdout. See the reliability section #5  for more details.
+
+Additional Notes
+* Using rand(3) and the probability specified on the client.in to simulate transmission loss. 
+    * All client datagrams are sent to the server.
+    * All incoming datagrams from the server & all client  ‘acknowledgements’ are dropped by the client (simulating transmission loss)  using 
+
+    (rand() / (double)RAND_MAX) < probability
+* Each time you receive a datagram you should be reading the data into a buffer. This buffer should be limited not in bytes but by datagram unit as specified in client.in. If the buffer is full the data is dropped. (More on this in UDP Congestion & Reliability) 
+
 
 #### Server
 
-    ./server ipaddressOrHostname echoport timeport
-    
-* Handles 2 types of services: echo and time
-  * echo: standard echo seen in class
-  * time: modified daytime service
-    * Infinite loop, send daytime, sleep 5 seconds, and repeat
-* Server creates listening socket for each service on specified port
-* Use select or poll to I/O multiplex on client connections. Upon accepting the connection, create a thread to provide the specified service (thread should detach). Main server thread waits for more connections from clients.
-* Make sure to use thread-safe functions (specific concern for readline library)
-  * Use provided Makefile to link with thread-safe version of readline from ~cse53/Stevens/umpv13e_solaris2.10/threads for server only
-* Server code MUST be robust to errors and threads terminate cleanly under all circumstances (no ZOMBIES). Server thread should print to stdout a message with appropriate details of termination, like “Time Client 127.0.0.1 termination: EPIPE error detected” or “Echo Client 130.245.182.10 termination: socket read returned 0”. Minimal cases to consider:
-  * ^C (CTRL C) from either client looks like a crash (5.11 to 5.13)
-    * EG. Time server will get EPIPE
-  * “Orphaned” sockets - never close socket if thread terminates without closing
+<code>bin/fserver</code> - UDP based file transfer server that reports the files available and delivers them over UDP datagrams upon request.
+
+Arguments
+The arguments for this program are not numerous but to stay consistent you should read them in the same fashion as the client. The file will be named <code>server.in</code>. The values are each on their own line and will always be in this order:
+* Port number for server to listen on.
+* Maximum sending sliding-window size.
+* Path to files to list on server
+
+Server Behavior
+* Open a UDP socket and bind on all IP that is a unicast address and linked to the network as well as localhost and the port found in server.in.
+    * Print in a readable format all ip and subnet address of each socket you bind to
+* Use your favorite I/O multiplexing function to listen on these sockets.
+* Upon receiving a datagram (use recvfrom() or recvmsg()) from either socket (report where the datagram came from to stdout), spawn a detached thread or fork a child to handle the connection with the client. The main thread/parent should return to multiplexing on the listen sockets.
+    * Note: You may use detached threads or child processes.  Threads can have concurrency issues depending on your implementation.
+* The thread/child will create a new UDP socket with an ephemeral port. Use getsockname(2) to print out the port and address of this new socket. 
+* The thread/child will respond to the client with a connection datagram containing the new ephemeral port that the client and server will communicate on.
+    * The thread/child will need a reference to the IP address that the datagram came in on to send the datagram to the client through the socket, otherwise the client would reject the packet.
+    * This datagram must be acknowledged by the client. It is to retransmitted in the event of loss.
+        * In the event of ACK lost, think about how the client will react also? 
+* Upon receiving an acknowledgement on this new socket from the client, the thread/child closes any socket inherited from the main thread/parent which is no longer required and sends the client the file or file list through sequenced UDP datagrams on the ‘new’ socket.
+
+#### UDP Reliability & Congestion Control
+In this assignment you are to implement a subset of the reliability mechanisms from on TCP Reno. 
+* Reliable data transmissions using ARQ sliding windows
+* Client uses Fast Retransmit and Cumulative ACKs
+* Congestion Control
+    * SlowStart
+    * Congestion Avoidance (Additive-Increase/Multiplicative Decrease - AIMD)
+
+Some of the details required are outlined below:
+1. Use sequence numbers per packet, not by bytes as done in TCP. 
+2. Each datagram payload is a fixed 512 bytes, inclusive of your own header which should include at least the following
+    * Sequence number
+    * Cumulative ACK
+    * Receiver window advertisements
+3. Implement a timeout mechanism on the sender (server). Use Stevens, Section 22.5 book code (rtt/dg_cli.c) as a starting place. You will need to modify for the code send-send-send-...  rather than send-receive, send-receive, …
+    * You MUST use the unprtt.h and rtt.c provided on PIAZZA. This code has been modified to use reduced times.
+4. Both sender (server) and receiver (client)  must have sliding windows.
+    * Sender sliding window for retransmission of lost datagrams, with maximum size as specified in the server.in file
+    * Receiver sliding window,  maximum size (in datagrams) as specified in the client.in file,  will be a simple buffer to store incoming sequenced datagrams for the client before printing them to stdout. The receiver must “advertise” to the sender within the ACK packets the current amount of space in the buffer. In this way the server can’t overrun the receiver with packets. 
+    * When either the sender’s or receiver’s sliding window is Full, print out a message on stdout. 
+    * Note: if the receiver buffer fills, there is a potential for deadlock. We will not test/handle this case.
+5. On the receiver’s side (client) will  use a thread to read from the receive buffer and print the contents to stdout. This thread will repetitively loop till all the file contents are printed. In the loop, the thread will sleep for an exponential distribution of -1 * μ * ln (random()). Upon waking, the thread will read and print all in-order fill contents available in the receive buffer at that moment, then sleeps for an exponential distribution amount of time.  
+    * You will need to use locks/semaphores to provide mutual exclusion on the buffer and there is no starvation. 
+6. You must create a mechanism to determine the when the sender had sent the last datagram. You can not use the EOF marker as a designator in the datagram, as it could be misinterpreted. Also not that the last datagram can be a “short” transmission (less than 512 bytes).  When the last datagram is ACK’d the child/server thread terminates.  Make sure to clean up any zombies on the server and client side. 
