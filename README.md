@@ -1,4 +1,4 @@
-## Network-Programming Programming Assigments
+## Programming Assigments
 
 CSE-533 : http://www3.cs.stonybrook.edu/~cse533/
 
